@@ -1,17 +1,21 @@
 /**
- * Tüm projeler için ortak CI/CD pipeline'ı.
+ * Tüm projeler için ortak CI/CD pipeline'ı. Prod onayı GitHub üzerinden, tag ile verilir.
+ *
+ * Akış:
+ *   main branch'e push  -> Build -> Test -> Deploy Stage -> "prod için tag oluşturun" yorumu
+ *   v* tag'i oluşturulur -> Build -> Test -> Stage kontrolü -> Deploy Prod
  *
  * Zorunlu parametreler:
- *   owner          : Proje sahibinin GitHub kullanıcı adı (hata olursa etiketlenir)
- *   buildCmd       : Build komutu
- *   testCmd        : Test komutu
+ *   owner             : Proje sahibinin GitHub kullanıcı adı (bildirimlerde etiketlenir)
+ *   buildCmd          : Build komutu
+ *   testCmd           : Test komutu
  *
  * Opsiyonel parametreler:
- *   approvers      : Prod onayı verebilecek Jenkins kullanıcı(ları), virgülle ayrılmış
- *   deployStageCmd : Stage'e deploy komutu (main branch'te çalışır)
- *   deployProdCmd  : Prod'a deploy komutu (onaydan sonra çalışır)
- *   testReports    : JUnit XML rapor yolu (varsayılan: **\/test-results/**\/*.xml)
- *   mainBranch     : Deploy yapılacak branch (varsayılan: main)
+ *   deployStageCmd    : Stage'e deploy komutu (main branch'te çalışır)
+ *   deployProdCmd     : Prod'a deploy komutu (release tag'lerinde çalışır)
+ *   testReports       : JUnit XML rapor yolu (varsayılan: **\/test-results/**\/*.xml)
+ *   mainBranch        : Stage'e çıkılacak branch (varsayılan: main)
+ *   releaseTagPattern : Prod deploy'u tetikleyen tag deseni (varsayılan: v*)
  */
 def call(Map cfg = [:]) {
     ['owner', 'buildCmd', 'testCmd'].each { key ->
@@ -21,6 +25,7 @@ def call(Map cfg = [:]) {
     }
 
     String mainBranch  = cfg.mainBranch ?: 'main'
+    String tagPattern  = cfg.releaseTagPattern ?: 'v*'
     String testReports = cfg.testReports ?: '**/test-results/**/*.xml'
 
     pipeline {
@@ -54,29 +59,35 @@ def call(Map cfg = [:]) {
                 }
                 steps {
                     sh cfg.deployStageCmd
+                    notifyGitHub(
+                        state      : 'success',
+                        context    : 'jenkins/stage',
+                        description: "Stage'e çıktı",
+                        owner      : cfg.owner,
+                        comment    : true,
+                        message    : """@${cfg.owner} 🚀 Bu commit stage'e çıktı.
+
+Production'a çıkmak için GitHub'da bu commit'i hedefleyen bir **Release** oluşturun (tag örn. `v1.4.0`).
+Commit: `${env.GIT_COMMIT}`
+"""
+                    )
                 }
             }
 
-            stage('Prod Onayı') {
+            stage('Prod Ön Kontrol') {
                 when {
                     allOf {
-                        branch mainBranch
+                        tag pattern: tagPattern, comparator: 'GLOB'
                         expression { cfg.deployProdCmd }
                     }
                 }
                 steps {
-                    notifyGitHub(
-                        state      : 'pending',
-                        context    : 'jenkins/prod-approval',
-                        description: 'Stage hazır, prod onayı bekleniyor',
-                        owner      : cfg.owner,
-                        comment    : true,
-                        message    : "@${cfg.owner} 🚀 Stage'e çıktı. Production'a çıkmak için onay verin: ${env.BUILD_URL}input"
-                    )
-                    timeout(time: 1, unit: 'DAYS') {
-                        input message: "Production'a çıkılsın mı?",
-                              ok: 'Evet, çık',
-                              submitter: cfg.approvers ?: ''
+                    script {
+                        String stageState = githubApi.statusOf(env.GIT_COMMIT, 'jenkins/stage')
+                        if (stageState != 'success') {
+                            error "${env.TAG_NAME} tag'inin gösterdiği commit stage'e başarıyla çıkmamış " +
+                                  "(jenkins/stage = ${stageState ?: 'yok'}). Prod deploy reddedildi."
+                        }
                     }
                 }
             }
@@ -84,7 +95,7 @@ def call(Map cfg = [:]) {
             stage('Deploy Prod') {
                 when {
                     allOf {
-                        branch mainBranch
+                        tag pattern: tagPattern, comparator: 'GLOB'
                         expression { cfg.deployProdCmd }
                     }
                 }
@@ -92,8 +103,11 @@ def call(Map cfg = [:]) {
                     sh cfg.deployProdCmd
                     notifyGitHub(
                         state      : 'success',
-                        context    : 'jenkins/prod-approval',
-                        description: "Production'a çıkıldı"
+                        context    : 'jenkins/prod',
+                        description: "${env.TAG_NAME} production'da",
+                        owner      : cfg.owner,
+                        comment    : true,
+                        message    : "@${cfg.owner} ✅ `${env.TAG_NAME}` production'a çıktı. Build: ${env.BUILD_URL}"
                     )
                 }
             }
@@ -112,7 +126,7 @@ def call(Map cfg = [:]) {
                 )
             }
             aborted {
-                notifyGitHub(state: 'error', description: 'Pipeline iptal edildi / onay verilmedi')
+                notifyGitHub(state: 'error', description: 'Pipeline iptal edildi')
             }
         }
     }
