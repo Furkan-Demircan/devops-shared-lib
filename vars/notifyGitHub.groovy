@@ -25,7 +25,7 @@ def call(Map args = [:]) {
 
     Map opts = [credentialsId: args.credentialsId, apiUrl: args.apiUrl]
 
-    githubApi.post("repos/${repo}/statuses/${sha}", [
+    githubApi.apiPost("repos/${repo}/statuses/${sha}", [
         state      : args.state ?: 'pending',
         context    : args.context ?: 'jenkins/ci',
         description: (args.description ?: '').take(140),
@@ -34,7 +34,7 @@ def call(Map args = [:]) {
 
     if (args.comment) {
         String text = args.message ?: defaultMessage(args.state ?: 'pending', args.owner)
-        githubApi.post("repos/${repo}/commits/${sha}/comments", [body: text], opts)
+        githubApi.apiPost("repos/${repo}/commits/${sha}/comments", [body: text], opts)
     }
 }
 

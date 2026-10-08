@@ -5,8 +5,8 @@ import groovy.json.JsonSlurperClassic
  * GitHub REST API için küçük yardımcılar. Diğer adımlar tarafından kullanılır.
  *
  *   githubApi.repoSlug()                      -> "org/repo"
- *   githubApi.post("repos/org/repo/...", [..]) -> true/false
- *   githubApi.get("repos/org/repo/...")        -> Map (veya hata olursa null)
+ *   githubApi.apiPost("repos/org/repo/...", [..]) -> true/false
+ *   githubApi.apiGet("repos/org/repo/...")        -> Map (veya hata olursa null)
  *   githubApi.statusOf(sha, "jenkins/stage")   -> "success" | "failure" | "pending" | null
  *
  * Ortak opsiyonlar (opts):
@@ -18,7 +18,7 @@ String repoSlug() {
     return parseSlug(env.GIT_URL)
 }
 
-boolean post(String path, Map body, Map opts = [:]) {
+boolean apiPost(String path, Map body, Map opts = [:]) {
     String file = ".gh-api-${env.BUILD_NUMBER}-${System.nanoTime()}.json"
     writeFile file: file, text: JsonOutput.toJson(body)
 
@@ -42,7 +42,7 @@ boolean post(String path, Map body, Map opts = [:]) {
     return rc == 0
 }
 
-Map get(String path, Map opts = [:]) {
+Map apiGet(String path, Map opts = [:]) {
     try {
         String out
         withCredentials([string(credentialsId: credId(opts), variable: 'GH_TOKEN')]) {
@@ -65,7 +65,7 @@ Map get(String path, Map opts = [:]) {
 String statusOf(String sha, String context, Map opts = [:]) {
     String repo = repoSlug()
     if (!repo || !sha) return null
-    Map combined = get("repos/${repo}/commits/${sha}/status", opts)
+    Map combined = apiGet("repos/${repo}/commits/${sha}/status", opts)
     return findState(combined, context)
 }
 
