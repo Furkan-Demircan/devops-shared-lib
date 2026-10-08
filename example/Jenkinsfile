@@ -1,0 +1,11 @@
+// A projesinin repo'sundaki Jenkinsfile — tamamı bu kadar.
+@Library('devops-lib') _
+
+standardPipeline(
+    owner         : 'ayse-github',        // GitHub kullanıcı adı (@mention için)
+    approvers     : 'ayse',               // Jenkins kullanıcı adı (prod onayı için)
+    buildCmd      : 'make build',
+    testCmd       : 'make test',
+    deployStageCmd: './deploy.sh stage',
+    deployProdCmd : './deploy.sh prod'
+)
