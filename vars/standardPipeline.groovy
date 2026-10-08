@@ -16,6 +16,8 @@
  *   testReports       : JUnit XML rapor yolu (varsayılan: **\/test-results/**\/*.xml)
  *   mainBranch        : Stage'e çıkılacak branch (varsayılan: main)
  *   releaseTagPattern : Prod deploy'u tetikleyen tag deseni (varsayılan: v*)
+ *   credentials       : Deploy komutlarına bağlanacak withCredentials binding'leri (varsayılan: yok)
+ *                       Örn. [string(credentialsId: 'deploy-token', variable: 'DEPLOY_TOKEN')]
  */
 def call(Map cfg = [:]) {
     ['owner', 'buildCmd', 'testCmd'].each { key ->
@@ -27,6 +29,7 @@ def call(Map cfg = [:]) {
     String mainBranch  = cfg.mainBranch ?: 'main'
     String tagPattern  = cfg.releaseTagPattern ?: 'v*'
     String testReports = cfg.testReports ?: '**/test-results/**/*.xml'
+    List credentials   = cfg.credentials ?: []
 
     pipeline {
         agent any
@@ -58,7 +61,9 @@ def call(Map cfg = [:]) {
                     }
                 }
                 steps {
-                    sh cfg.deployStageCmd
+                    withCredentials(credentials) {
+                        sh cfg.deployStageCmd
+                    }
                     notifyGitHub(
                         state      : 'success',
                         context    : 'jenkins/stage',
@@ -100,7 +105,9 @@ Commit: `${env.GIT_COMMIT}`
                     }
                 }
                 steps {
-                    sh cfg.deployProdCmd
+                    withCredentials(credentials) {
+                        sh cfg.deployProdCmd
+                    }
                     notifyGitHub(
                         state      : 'success',
                         context    : 'jenkins/prod',

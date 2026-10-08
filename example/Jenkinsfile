@@ -6,5 +6,7 @@ standardPipeline(
     buildCmd      : 'make build',
     testCmd       : 'make test',
     deployStageCmd: './deploy.sh stage',  // main'e push'ta çalışır
-    deployProdCmd : './deploy.sh prod'    // v* tag'i / Release oluşturulunca çalışır
+    deployProdCmd : './deploy.sh prod',   // v* tag'i / Release oluşturulunca çalışır
+    // Opsiyonel: yalnızca deploy adımlarına bağlanan Jenkins credential'ları
+    credentials   : [string(credentialsId: 'deploy-token', variable: 'DEPLOY_TOKEN')]
 )
