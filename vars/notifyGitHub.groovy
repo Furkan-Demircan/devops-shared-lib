@@ -15,15 +15,15 @@
  *   credentialsId, apiUrl : githubApi'ye aynen iletilir
  */
 def call(Map args = [:]) {
+    Map opts = [credentialsId: args.credentialsId, apiUrl: args.apiUrl]
+
     String repo = githubApi.repoSlug()
-    String sha  = env.GIT_COMMIT
+    String sha  = githubApi.headSha(opts)
 
     if (!repo || !sha) {
         echo "notifyGitHub: repo (${repo}) veya commit (${sha}) bulunamadı, bildirim atlanıyor."
         return
     }
-
-    Map opts = [credentialsId: args.credentialsId, apiUrl: args.apiUrl]
 
     githubApi.apiPost("repos/${repo}/statuses/${sha}", [
         state      : args.state ?: 'pending',

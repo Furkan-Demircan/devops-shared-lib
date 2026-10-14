@@ -1,5 +1,6 @@
 // A projesinin repo'sundaki Jenkinsfile — tamamı bu kadar.
-@Library('devops-lib') _
+// Library'yi sürüme sabitleyin: lib'deki her değişiklik tüm projeleri anında etkilemesin.
+@Library('devops-lib@v1') _
 
 standardPipeline(
     owner         : 'ayse-github',        // GitHub kullanıcı adı (@mention için)
@@ -7,6 +8,7 @@ standardPipeline(
     testCmd       : 'make test',
     deployStageCmd: './deploy.sh stage',  // main'e push'ta çalışır
     deployProdCmd : './deploy.sh prod',   // v* tag'i / Release oluşturulunca çalışır
-    // Opsiyonel: yalnızca deploy adımlarına bağlanan Jenkins credential'ları
-    credentials   : [string(credentialsId: 'deploy-token', variable: 'DEPLOY_TOKEN')]
+    // Opsiyonel: yalnızca ilgili deploy adımına bağlanan Jenkins credential'ları
+    stageCredentials: [string(credentialsId: 'stage-deploy-token', variable: 'DEPLOY_TOKEN')],
+    prodCredentials : [string(credentialsId: 'prod-deploy-token',  variable: 'DEPLOY_TOKEN')]
 )
