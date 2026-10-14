@@ -36,7 +36,7 @@ def call(Map cfg = [:]) {
     String mainBranch     = cfg.mainBranch ?: 'main'
     String tagPattern     = cfg.releaseTagPattern ?: 'v*'
     String testReports    = cfg.testReports ?: '**/test-results/**/*.xml'
-    boolean allowEmpty    = cfg.allowEmptyTestResults as boolean
+    boolean allowEmpty    = cfg.allowEmptyTestResults == true  // CPS "null as boolean" -> null döner, junit patlar
     String agentLabel     = cfg.agentLabel ?: ''
     int timeoutMinutes    = (cfg.timeoutMinutes ?: 60) as int
     List stageCredentials = cfg.stageCredentials ?: cfg.credentials ?: []
@@ -66,7 +66,7 @@ def call(Map cfg = [:]) {
 
             stage('Test') {
                 when {
-                    expression { cfg.testCmd as boolean }
+                    expression { !!cfg.testCmd }
                 }
                 steps {
                     sh cfg.testCmd
@@ -82,7 +82,7 @@ def call(Map cfg = [:]) {
                 when {
                     allOf {
                         branch mainBranch
-                        expression { cfg.deployStageCmd as boolean }
+                        expression { !!cfg.deployStageCmd }
                         // UNSTABLE (başarısız test raporu) build'ler deploy edilmez
                         expression { currentBuild.currentResult == 'SUCCESS' }
                     }
@@ -115,7 +115,7 @@ Commit: `${env.GIT_COMMIT}`
                 when {
                     allOf {
                         tag pattern: tagPattern, comparator: 'GLOB'
-                        expression { cfg.deployProdCmd as boolean }
+                        expression { !!cfg.deployProdCmd }
                     }
                 }
                 steps {
@@ -133,7 +133,7 @@ Commit: `${env.GIT_COMMIT}`
                 when {
                     allOf {
                         tag pattern: tagPattern, comparator: 'GLOB'
-                        expression { cfg.deployProdCmd as boolean }
+                        expression { !!cfg.deployProdCmd }
                         expression { currentBuild.currentResult == 'SUCCESS' }
                     }
                 }
