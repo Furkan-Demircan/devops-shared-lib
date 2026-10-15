@@ -1,9 +1,16 @@
 /**
- * Tüm projeler için ortak CI/CD pipeline'ı. Prod onayı GitHub üzerinden, tag ile verilir.
+ * Tüm projeler için ortak CI/CD pipeline'ı. Prod onayı GitHub üzerinden, stage -> main PR'ı ile verilir.
  *
  * Akış:
- *   main branch'e push  -> Build -> Test -> Deploy Stage -> "prod için tag oluşturun" yorumu
- *   v* tag'i oluşturulur -> Build -> Test -> Stage kontrolü -> Deploy Prod
+ *   stage branch'ine merge/push -> Build -> Test -> Deploy Stage -> "prod için main'e PR açın" yorumu
+ *   stage -> main PR'ı          -> Build -> Test (PR kontrolü, deploy yok)
+ *   PR onaylanıp main'e merge   -> Build -> Test -> Prod Ön Kontrol -> Deploy Prod
+ *
+ * Prod Ön Kontrol, main'deki commit için şunları doğrular:
+ *   - main'e stage branch'inden açılmış, merge edilmiş bir PR ile gelmiş (doğrudan push reddedilir)
+ *   - PR, yazarı dışında en az bir kişi tarafından onaylanmış
+ *   - PR'ın son commit'i stage'e başarıyla çıkmış (jenkins/stage = success)
+ *   - main'in içeriği stage'de denenen içerikle birebir aynı (tree SHA eşleşmesi)
  *
  * Zorunlu parametreler:
  *   owner             : Proje sahibinin GitHub kullanıcı adı (bildirimlerde etiketlenir)
@@ -11,12 +18,12 @@
  *
  * Opsiyonel parametreler:
  *   testCmd             : Test komutu (verilmezse Test aşaması atlanır)
- *   deployStageCmd      : Stage'e deploy komutu (main branch'te çalışır)
- *   deployProdCmd       : Prod'a deploy komutu (release tag'lerinde çalışır)
+ *   deployStageCmd      : Stage'e deploy komutu (stage branch'inde çalışır)
+ *   deployProdCmd       : Prod'a deploy komutu (main branch'inde çalışır)
  *   testReports         : JUnit XML rapor yolu (varsayılan: **\/test-results/**\/*.xml)
  *   allowEmptyTestResults : true ise rapor bulunamaması hata sayılmaz (varsayılan: false)
- *   mainBranch          : Stage'e çıkılacak branch (varsayılan: main)
- *   releaseTagPattern   : Prod deploy'u tetikleyen tag deseni (varsayılan: v*)
+ *   stageBranch         : Stage'e çıkılacak branch (varsayılan: stage)
+ *   mainBranch          : Prod'a çıkılacak branch (varsayılan: main)
  *   agentLabel          : Build'in çalışacağı Jenkins agent label'ı (varsayılan: herhangi biri)
  *   timeoutMinutes      : Pipeline zaman aşımı, dakika (varsayılan: 60)
  *   stageCredentials    : Yalnızca stage deploy'una bağlanan withCredentials binding'leri
@@ -33,8 +40,8 @@ def call(Map cfg = [:]) {
         }
     }
 
+    String stageBranch    = cfg.stageBranch ?: 'stage'
     String mainBranch     = cfg.mainBranch ?: 'main'
-    String tagPattern     = cfg.releaseTagPattern ?: 'v*'
     String testReports    = cfg.testReports ?: '**/test-results/**/*.xml'
     boolean allowEmpty    = cfg.allowEmptyTestResults == true  // CPS "null as boolean" -> null döner, junit patlar
     String agentLabel     = cfg.agentLabel ?: ''
@@ -43,8 +50,12 @@ def call(Map cfg = [:]) {
     List prodCredentials  = cfg.prodCredentials ?: cfg.credentials ?: []
     Map gh                = [credentialsId: cfg.githubCredentialsId, apiUrl: cfg.githubApiUrl]
 
-    // Hata yorumlarıyla owner'ı yalnızca main ve tag build'lerinde etiketle (PR/feature spam'i önlenir)
-    boolean notifyOwner = env.BRANCH_NAME == mainBranch || env.TAG_NAME
+    if (stageBranch == mainBranch) {
+        error "standardPipeline: stageBranch ve mainBranch aynı olamaz ('${mainBranch}')."
+    }
+
+    // Hata yorumlarıyla owner'ı yalnızca stage ve main build'lerinde etiketle (PR/feature spam'i önlenir)
+    boolean notifyOwner = env.BRANCH_NAME in [stageBranch, mainBranch]
 
     pipeline {
         agent { label agentLabel }
@@ -81,7 +92,7 @@ def call(Map cfg = [:]) {
             stage('Deploy Stage') {
                 when {
                     allOf {
-                        branch mainBranch
+                        branch stageBranch
                         expression { !!cfg.deployStageCmd }
                         // UNSTABLE (başarısız test raporu) build'ler deploy edilmez
                         expression { currentBuild.currentResult == 'SUCCESS' }
@@ -99,7 +110,8 @@ def call(Map cfg = [:]) {
                         comment    : true,
                         message    : """@${cfg.owner} 🚀 Bu commit stage'e çıktı.
 
-Production'a çıkmak için GitHub'da bu commit'i hedefleyen bir **Release** oluşturun (tag örn. `v1.4.0`).
+Production'a çıkmak için GitHub'da `${stageBranch}` → `${mainBranch}` Pull Request'i açın.
+PR onaylanıp merge edildiğinde prod deploy otomatik başlar.
 Commit: `${env.GIT_COMMIT}`
 """
                     ])
@@ -114,17 +126,46 @@ Commit: `${env.GIT_COMMIT}`
             stage('Prod Ön Kontrol') {
                 when {
                     allOf {
-                        tag pattern: tagPattern, comparator: 'GLOB'
+                        branch mainBranch
                         expression { !!cfg.deployProdCmd }
                     }
                 }
                 steps {
                     script {
-                        String stageState = githubApi.statusOf(env.GIT_COMMIT, 'jenkins/stage', gh)
+                        String sha = env.GIT_COMMIT
+                        Map pr = githubApi.mergedPullFor(sha, mainBranch, gh)
+                        if (!pr) {
+                            error "${sha} commit'i ${mainBranch}'e merge edilmiş bir PR ile gelmemiş " +
+                                  "(doğrudan push?). Prod deploy reddedildi."
+                        }
+                        if (pr.head?.ref != stageBranch) {
+                            error "PR #${pr.number} '${pr.head?.ref}' branch'inden açılmış; prod'a yalnızca " +
+                                  "'${stageBranch}' branch'inden gelen değişiklikler çıkabilir. Prod deploy reddedildi."
+                        }
+
+                        List approvers = githubApi.approversOf(pr, gh)
+                        if (!approvers) {
+                            error "PR #${pr.number} onaylanmadan merge edilmiş. Prod deploy reddedildi."
+                        }
+
+                        String stageSha   = pr.head.sha
+                        String stageState = githubApi.statusOf(stageSha, 'jenkins/stage', gh)
                         if (stageState != 'success') {
-                            error "${env.TAG_NAME} tag'inin gösterdiği commit stage'e başarıyla çıkmamış " +
+                            error "PR #${pr.number}'ın son commit'i (${stageSha}) stage'e başarıyla çıkmamış " +
                                   "(jenkins/stage = ${stageState ?: 'yok'}). Prod deploy reddedildi."
                         }
+
+                        String mainTree  = githubApi.treeOf(sha, gh)
+                        String stageTree = githubApi.treeOf(stageSha, gh)
+                        if (!mainTree || mainTree != stageTree) {
+                            error "${mainBranch}'in içeriği stage'de denenen commit'le (${stageSha}) aynı değil; " +
+                                  "${mainBranch}'de stage'de olmayan değişiklik var. Önce ${mainBranch}'i " +
+                                  "${stageBranch}'e merge edip stage'den geçirin. Prod deploy reddedildi."
+                        }
+
+                        env.PROD_PR_NUMBER = "${pr.number}"
+                        env.PROD_APPROVERS = approvers.join(', ')
+                        echo "Prod onayı: PR #${pr.number}, onaylayan(lar): ${env.PROD_APPROVERS}"
                     }
                 }
             }
@@ -132,7 +173,7 @@ Commit: `${env.GIT_COMMIT}`
             stage('Deploy Prod') {
                 when {
                     allOf {
-                        tag pattern: tagPattern, comparator: 'GLOB'
+                        branch mainBranch
                         expression { !!cfg.deployProdCmd }
                         expression { currentBuild.currentResult == 'SUCCESS' }
                     }
@@ -144,15 +185,16 @@ Commit: `${env.GIT_COMMIT}`
                     notifyGitHub(gh + [
                         state      : 'success',
                         context    : 'jenkins/prod',
-                        description: "${env.TAG_NAME} production'da",
+                        description: "Production'da (PR #${env.PROD_PR_NUMBER})",
                         owner      : cfg.owner,
                         comment    : true,
-                        message    : "@${cfg.owner} ✅ `${env.TAG_NAME}` production'a çıktı. Build: ${env.BUILD_URL}"
+                        message    : "@${cfg.owner} ✅ PR #${env.PROD_PR_NUMBER} production'a çıktı " +
+                                     "(onaylayan: ${env.PROD_APPROVERS}). Build: ${env.BUILD_URL}"
                     ])
                 }
                 post {
                     failure {
-                        notifyGitHub(gh + [state: 'failure', context: 'jenkins/prod', description: "${env.TAG_NAME} prod deploy başarısız"])
+                        notifyGitHub(gh + [state: 'failure', context: 'jenkins/prod', description: 'Prod deploy başarısız'])
                     }
                 }
             }

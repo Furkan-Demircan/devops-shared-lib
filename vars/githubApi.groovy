@@ -7,8 +7,11 @@ import groovy.json.JsonSlurperClassic
  *   githubApi.repoSlug()                      -> "org/repo"
  *   githubApi.headSha()                       -> GitHub'daki commit SHA'sı (PR build'lerinde PR head'i)
  *   githubApi.apiPost("repos/org/repo/...", [..]) -> true/false
- *   githubApi.apiGet("repos/org/repo/...")        -> Map (veya hata olursa null)
+ *   githubApi.apiGet("repos/org/repo/...")        -> Map/List (veya hata olursa null)
  *   githubApi.statusOf(sha, "jenkins/stage")   -> "success" | "failure" | "pending" | null
+ *   githubApi.mergedPullFor(sha, "main")      -> sha'yı main'e getiren merge edilmiş PR (veya null)
+ *   githubApi.approversOf(pr)                 -> PR'ı onaylayan kullanıcılar (PR yazarı hariç)
+ *   githubApi.treeOf(sha)                     -> commit'in tree SHA'sı (içerik karşılaştırması için)
  *
  * Ortak opsiyonlar (opts):
  *   credentialsId : Jenkins'teki GitHub token credential ID'si (varsayılan: github-token)
@@ -50,7 +53,7 @@ boolean apiPost(String path, Map body, Map opts = [:]) {
     }
 }
 
-Map apiGet(String path, Map opts = [:]) {
+def apiGet(String path, Map opts = [:]) {
     try {
         String out
         withCredentials([string(credentialsId: credId(opts), variable: 'GH_TOKEN')]) {
@@ -59,7 +62,7 @@ Map apiGet(String path, Map opts = [:]) {
                   -H "Authorization: Bearer \$GH_TOKEN" \\
                   -H "Accept: application/vnd.github+json" \\
                   -H "X-GitHub-Api-Version: 2022-11-28" \\
-                  ${apiUrl(opts)}/${path}
+                  '${apiUrl(opts)}/${path}'
             """).trim()
         }
         return parseJson(out)
@@ -92,6 +95,32 @@ String statusOf(String sha, String context, Map opts = [:]) {
     return findState(combined, context)
 }
 
+/**
+ * Verilen commit'i hedef branch'e getiren, merge edilmiş PR.
+ * Merge, squash ve rebase merge'lerin hepsinde PR'ın merge_commit_sha'sı branch'e düşen commit'tir.
+ */
+Map mergedPullFor(String sha, String baseBranch, Map opts = [:]) {
+    String repo = repoSlug()
+    if (!repo || !sha) return null
+    def pulls = apiGet("repos/${repo}/commits/${sha}/pulls?per_page=100", opts)
+    return findMergedPull(pulls, sha, baseBranch)
+}
+
+/** PR'ı onaylayanlar: son review'u APPROVED olan kullanıcılar, PR yazarı hariç. */
+List approversOf(Map pr, Map opts = [:]) {
+    String repo = repoSlug()
+    if (!repo || !pr) return []
+    def reviews = apiGet("repos/${repo}/pulls/${pr.number}/reviews?per_page=100", opts)
+    return findApprovers(reviews, pr.user?.login)
+}
+
+String treeOf(String sha, Map opts = [:]) {
+    String repo = repoSlug()
+    if (!repo || !sha) return null
+    Map commit = apiGet("repos/${repo}/git/commits/${sha}", opts)
+    return commit?.tree?.sha
+}
+
 private String credId(Map opts) { return opts.credentialsId ?: 'github-token' }
 private String apiUrl(Map opts) { return opts.apiUrl ?: 'https://api.github.com' }
 
@@ -102,8 +131,27 @@ private String findState(Map combined, String context) {
 }
 
 @NonCPS
-private Map parseJson(String text) {
-    return new JsonSlurperClassic().parseText(text) as Map
+private Object parseJson(String text) {
+    return new JsonSlurperClassic().parseText(text)
+}
+
+@NonCPS
+private Map findMergedPull(def pulls, String sha, String baseBranch) {
+    if (!(pulls instanceof List)) return null
+    return pulls.find { it.merged_at && it.merge_commit_sha == sha && it.base?.ref == baseBranch } as Map
+}
+
+@NonCPS
+private List findApprovers(def reviews, String author) {
+    if (!(reviews instanceof List)) return []
+    // Review'lar kronolojik gelir; COMMENTED onay durumunu değiştirmez
+    Map last = [:]
+    reviews.each { r ->
+        if (r.user?.login && r.state in ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED']) {
+            last[r.user.login] = r.state
+        }
+    }
+    return last.findAll { k, v -> v == 'APPROVED' && k != author }.collect { k, v -> k }
 }
 
 @NonCPS
