@@ -24,6 +24,10 @@ devops-shared-lib/
    - PR'ın son commit'i stage'e başarıyla çıkmış (`jenkins/stage = success`)
    - `main`'in içeriği stage'de denenen commit'le birebir aynı (tree SHA eşleşmesi)
 
+`deployProdCmd` içinde stage'de build edilen image'ı **`$STAGE_COMMIT`** ile bulun, `$GIT_COMMIT` ile değil:
+`main`'deki commit PR'ın merge commit'idir ve onun için build yapılmamıştır. `$PROD_PR_NUMBER` ve
+`$PROD_MERGER` de kullanılabilir (eski akıştaki `$TAG_NAME` artık yok).
+
 Review onayı aranmaz; sorumlu kişi kendi açtığı PR'ı da merge ederek prod'a çıkarabilir.
 Birden fazla sorumlu için: `prodMergers: ['ayse-github', 'mehmet-github']`.
 

@@ -19,7 +19,12 @@
  * Opsiyonel parametreler:
  *   testCmd             : Test komutu (verilmezse Test aşaması atlanır)
  *   deployStageCmd      : Stage'e deploy komutu (stage branch'inde çalışır)
- *   deployProdCmd       : Prod'a deploy komutu (main branch'inde çalışır)
+ *   deployProdCmd       : Prod'a deploy komutu (main branch'inde çalışır). Ortam değişkenleri:
+ *                           STAGE_COMMIT   : stage'e çıkmış commit (PR'ın son commit'i). Stage'de build
+ *                                            edilen image/artefact'ı bununla bulun, GIT_COMMIT ile değil
+ *                                            (GIT_COMMIT main'deki merge commit'idir, onun için build yoktur)
+ *                           PROD_PR_NUMBER : prod'a çıkan PR'ın numarası (release etiketi için kullanılabilir)
+ *                           PROD_MERGER    : PR'ı merge eden kullanıcı
  *   testReports         : JUnit XML rapor yolu (varsayılan: **\/test-results/**\/*.xml)
  *   allowEmptyTestResults : true ise rapor bulunamaması hata sayılmaz (varsayılan: false)
  *   stageBranch         : Stage'e çıkılacak branch (varsayılan: stage)
@@ -167,6 +172,9 @@ Commit: `${env.GIT_COMMIT}`
                                   "${stageBranch}'e merge edip stage'den geçirin. Prod deploy reddedildi."
                         }
 
+                        // deployProdCmd bunları kullanır: main'deki commit PR'ın merge commit'idir, stage'de
+                        // build edilen artefact'lar (örn. image tag'i) ise PR'ın son commit'ine aittir
+                        env.STAGE_COMMIT   = stageSha
                         env.PROD_PR_NUMBER = "${pr.number}"
                         env.PROD_MERGER    = merger
                         echo "Prod onayı: PR #${pr.number}, merge eden: ${merger}"
