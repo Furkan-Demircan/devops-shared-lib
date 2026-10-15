@@ -10,7 +10,7 @@ import groovy.json.JsonSlurperClassic
  *   githubApi.apiGet("repos/org/repo/...")        -> Map/List (veya hata olursa null)
  *   githubApi.statusOf(sha, "jenkins/stage")   -> "success" | "failure" | "pending" | null
  *   githubApi.mergedPullFor(sha, "main")      -> sha'yı main'e getiren merge edilmiş PR (veya null)
- *   githubApi.approversOf(pr)                 -> PR'ı onaylayan kullanıcılar (PR yazarı hariç)
+ *   githubApi.mergerOf(pr)                    -> PR'ı merge eden kullanıcı
  *   githubApi.treeOf(sha)                     -> commit'in tree SHA'sı (içerik karşılaştırması için)
  *
  * Ortak opsiyonlar (opts):
@@ -102,23 +102,36 @@ String statusOf(String sha, String context, Map opts = [:]) {
 Map mergedPullFor(String sha, String baseBranch, Map opts = [:]) {
     String repo = repoSlug()
     if (!repo || !sha) return null
-    def pulls = apiGet("repos/${repo}/commits/${sha}/pulls?per_page=100", opts)
+    def pulls = apiGetOrFail("repos/${repo}/commits/${sha}/pulls?per_page=100", opts)
     return findMergedPull(pulls, sha, baseBranch)
 }
 
-/** PR'ı onaylayanlar: son review'u APPROVED olan kullanıcılar, PR yazarı hariç. */
-List approversOf(Map pr, Map opts = [:]) {
+/** PR'ı merge eden kullanıcı. Liste endpoint'i merged_by döndürmediği için PR ayrıca okunur. */
+String mergerOf(Map pr, Map opts = [:]) {
     String repo = repoSlug()
-    if (!repo || !pr) return []
-    def reviews = apiGet("repos/${repo}/pulls/${pr.number}/reviews?per_page=100", opts)
-    return findApprovers(reviews, pr.user?.login)
+    if (!repo || !pr) return null
+    Map full = apiGetOrFail("repos/${repo}/pulls/${pr.number}", opts)
+    return full?.merged_by?.login
 }
 
 String treeOf(String sha, Map opts = [:]) {
     String repo = repoSlug()
     if (!repo || !sha) return null
-    Map commit = apiGet("repos/${repo}/git/commits/${sha}", opts)
+    Map commit = apiGetOrFail("repos/${repo}/git/commits/${sha}", opts)
     return commit?.tree?.sha
+}
+
+/**
+ * Prod kontrolleri için: API hatası "PR yok" / "merge eden yok" gibi yanlış bir sonuca dönüşmesin,
+ * gerçek sebebiyle build'i düşürsün.
+ */
+private def apiGetOrFail(String path, Map opts) {
+    def result = apiGet(path, opts)
+    if (result == null) {
+        error "GitHub API'ye erişilemedi (GET ${path}). '${credId(opts)}' credential'ındaki token'ı " +
+              "kontrol edin: 401 = geçersiz/süresi dolmuş token, 403/404 = token'ın bu repo'ya yetkisi yok."
+    }
+    return result
 }
 
 private String credId(Map opts) { return opts.credentialsId ?: 'github-token' }
@@ -139,19 +152,6 @@ private Object parseJson(String text) {
 private Map findMergedPull(def pulls, String sha, String baseBranch) {
     if (!(pulls instanceof List)) return null
     return pulls.find { it.merged_at && it.merge_commit_sha == sha && it.base?.ref == baseBranch } as Map
-}
-
-@NonCPS
-private List findApprovers(def reviews, String author) {
-    if (!(reviews instanceof List)) return []
-    // Review'lar kronolojik gelir; COMMENTED onay durumunu değiştirmez
-    Map last = [:]
-    reviews.each { r ->
-        if (r.user?.login && r.state in ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED']) {
-            last[r.user.login] = r.state
-        }
-    }
-    return last.findAll { k, v -> v == 'APPROVED' && k != author }.collect { k, v -> k }
 }
 
 @NonCPS

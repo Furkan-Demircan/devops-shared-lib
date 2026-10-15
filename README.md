@@ -16,26 +16,28 @@ devops-shared-lib/
 
 1. Geliştirici feature branch'ini `stage`'e merge eder → Jenkins build + test + stage deploy yapar.
 2. Başarılıysa commit'e `jenkins/stage = success` işareti ve proje sahibini etiketleyen yorum düşer.
-3. Prod'a çıkmak isteyen geliştirici `stage` → `main` Pull Request'i açar. **Prod onayı bu PR'ın onayıdır.**
-4. PR onaylanıp merge edilince Jenkins `main` build'inde şunları doğrular, hepsi tamamsa prod'a deploy eder:
+3. Prod'a çıkmak isteyen kişi (proje sorumlusu dahil) `stage` → `main` Pull Request'i açar.
+4. **Prod onayı, PR'ı proje sorumlusunun merge etmesidir.** Merge'den sonra Jenkins `main` build'inde
+   şunları doğrular, hepsi tamamsa prod'a deploy eder:
    - Commit `main`'e `stage`'den açılmış, merge edilmiş bir PR ile gelmiş (doğrudan push → deploy reddedilir)
-   - PR, yazarı dışında en az bir kişi tarafından onaylanmış
+   - PR'ı merge eden kişi `prodMergers` listesinde (varsayılan: `owner`)
    - PR'ın son commit'i stage'e başarıyla çıkmış (`jenkins/stage = success`)
    - `main`'in içeriği stage'de denenen commit'le birebir aynı (tree SHA eşleşmesi)
 
-Kim onaylayabilir / kim merge edebilir? → GitHub'daki `main` branch protection belirler.
+Review onayı aranmaz; sorumlu kişi kendi açtığı PR'ı da merge ederek prod'a çıkarabilir.
+Birden fazla sorumlu için: `prodMergers: ['ayse-github', 'mehmet-github']`.
 
 ## GitHub kurulum notları
 
 `main` için branch protection (veya ruleset):
 
-- **Require a pull request before merging** + **Require approvals** (en az 1). İsterseniz CODEOWNERS ile
-  onaylayıcıları sınırlayın (*Require review from Code Owners*).
-- **Dismiss stale pull request approvals when new commits are pushed** — onaydan sonra eklenen commit
-  yeniden onay gerektirsin.
+- **Require a pull request before merging** (onay sayısı 0) — doğrudan push kapansın, yalnızca PR ile merge.
 - **Require status checks to pass** → `jenkins/ci` (PR build'i) zorunlu olsun.
+- **Restrict who can push / merge** → yalnızca proje sorumlusu(ları). Bu ayar yalnızca **organizasyon**
+  repo'larında var (ruleset bypass listesi veya *Restrict who can push to matching branches*). Kişisel
+  repo'larda yazma yetkisi olan herkes merge edebilir; bu durumda merge'ü engelleyemezsiniz ama Jenkins
+  yetkisiz kişinin merge'ünü prod'a çıkarmaz (`main` stage'den ileride kalır, yetkili biri tekrar çıkarmalı).
 - **Do not allow bypassing the above settings** — admin'ler de kuralı atlayamasın.
-- Doğrudan push'u kapatın; yalnızca PR ile merge.
 - Merge yöntemi olarak **Create a merge commit** önerilir. Squash/rebase de çalışır ama `main`'de `stage`'de
   olmayan commit'ler birikir ve sonraki `stage` → `main` PR'larında çakışma çıkabilir.
 

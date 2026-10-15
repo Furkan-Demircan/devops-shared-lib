@@ -7,7 +7,8 @@ standardPipeline(
     buildCmd      : 'make build',
     testCmd       : 'make test',
     deployStageCmd: './deploy.sh stage',  // stage branch'ine merge edilince çalışır
-    deployProdCmd : './deploy.sh prod',   // onaylı stage -> main PR'ı merge edilince çalışır
+    deployProdCmd : './deploy.sh prod',   // stage -> main PR'ı sorumlu kişi tarafından merge edilince çalışır
+    // prodMergers: ['ayse-github', 'mehmet-github'],  // Prod'a çıkarabilecekler (varsayılan: owner)
     // Opsiyonel: yalnızca ilgili deploy adımına bağlanan Jenkins credential'ları
     stageCredentials: [string(credentialsId: 'stage-deploy-token', variable: 'DEPLOY_TOKEN')],
     prodCredentials : [string(credentialsId: 'prod-deploy-token',  variable: 'DEPLOY_TOKEN')]

@@ -4,11 +4,11 @@
  * Akış:
  *   stage branch'ine merge/push -> Build -> Test -> Deploy Stage -> "prod için main'e PR açın" yorumu
  *   stage -> main PR'ı          -> Build -> Test (PR kontrolü, deploy yok)
- *   PR onaylanıp main'e merge   -> Build -> Test -> Prod Ön Kontrol -> Deploy Prod
+ *   PR sorumlu kişi tarafından main'e merge -> Build -> Test -> Prod Ön Kontrol -> Deploy Prod
  *
  * Prod Ön Kontrol, main'deki commit için şunları doğrular:
  *   - main'e stage branch'inden açılmış, merge edilmiş bir PR ile gelmiş (doğrudan push reddedilir)
- *   - PR, yazarı dışında en az bir kişi tarafından onaylanmış
+ *   - PR'ı merge eden kişi prodMergers listesinde (prod onayı = sorumlu kişinin merge'ü)
  *   - PR'ın son commit'i stage'e başarıyla çıkmış (jenkins/stage = success)
  *   - main'in içeriği stage'de denenen içerikle birebir aynı (tree SHA eşleşmesi)
  *
@@ -24,6 +24,8 @@
  *   allowEmptyTestResults : true ise rapor bulunamaması hata sayılmaz (varsayılan: false)
  *   stageBranch         : Stage'e çıkılacak branch (varsayılan: stage)
  *   mainBranch          : Prod'a çıkılacak branch (varsayılan: main)
+ *   prodMergers         : stage -> main PR'ını merge ederek prod'a çıkarabilecek GitHub kullanıcıları
+ *                         (varsayılan: [owner])
  *   agentLabel          : Build'in çalışacağı Jenkins agent label'ı (varsayılan: herhangi biri)
  *   timeoutMinutes      : Pipeline zaman aşımı, dakika (varsayılan: 60)
  *   stageCredentials    : Yalnızca stage deploy'una bağlanan withCredentials binding'leri
@@ -42,6 +44,7 @@ def call(Map cfg = [:]) {
 
     String stageBranch    = cfg.stageBranch ?: 'stage'
     String mainBranch     = cfg.mainBranch ?: 'main'
+    List prodMergers      = cfg.prodMergers ?: [cfg.owner]
     String testReports    = cfg.testReports ?: '**/test-results/**/*.xml'
     boolean allowEmpty    = cfg.allowEmptyTestResults == true  // CPS "null as boolean" -> null döner, junit patlar
     String agentLabel     = cfg.agentLabel ?: ''
@@ -111,7 +114,7 @@ def call(Map cfg = [:]) {
                         message    : """@${cfg.owner} 🚀 Bu commit stage'e çıktı.
 
 Production'a çıkmak için GitHub'da `${stageBranch}` → `${mainBranch}` Pull Request'i açın.
-PR onaylanıp merge edildiğinde prod deploy otomatik başlar.
+PR ${prodMergers.collect { "@${it}" }.join(' / ')} tarafından merge edildiğinde prod deploy otomatik başlar.
 Commit: `${env.GIT_COMMIT}`
 """
                     ])
@@ -143,9 +146,10 @@ Commit: `${env.GIT_COMMIT}`
                                   "'${stageBranch}' branch'inden gelen değişiklikler çıkabilir. Prod deploy reddedildi."
                         }
 
-                        List approvers = githubApi.approversOf(pr, gh)
-                        if (!approvers) {
-                            error "PR #${pr.number} onaylanmadan merge edilmiş. Prod deploy reddedildi."
+                        String merger = githubApi.mergerOf(pr, gh)
+                        if (!(merger in prodMergers)) {
+                            error "PR #${pr.number}'ı '${merger ?: 'bilinmiyor'}' merge etmiş; prod'a yalnızca " +
+                                  "${prodMergers.join(', ')} çıkarabilir. Prod deploy reddedildi."
                         }
 
                         String stageSha   = pr.head.sha
@@ -164,8 +168,8 @@ Commit: `${env.GIT_COMMIT}`
                         }
 
                         env.PROD_PR_NUMBER = "${pr.number}"
-                        env.PROD_APPROVERS = approvers.join(', ')
-                        echo "Prod onayı: PR #${pr.number}, onaylayan(lar): ${env.PROD_APPROVERS}"
+                        env.PROD_MERGER    = merger
+                        echo "Prod onayı: PR #${pr.number}, merge eden: ${merger}"
                     }
                 }
             }
@@ -189,7 +193,7 @@ Commit: `${env.GIT_COMMIT}`
                         owner      : cfg.owner,
                         comment    : true,
                         message    : "@${cfg.owner} ✅ PR #${env.PROD_PR_NUMBER} production'a çıktı " +
-                                     "(onaylayan: ${env.PROD_APPROVERS}). Build: ${env.BUILD_URL}"
+                                     "(merge eden: @${env.PROD_MERGER}). Build: ${env.BUILD_URL}"
                     ])
                 }
                 post {
