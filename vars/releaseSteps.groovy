@@ -230,12 +230,13 @@ void buildImage(Map rc, boolean push) {
         echo "${rc.image}:${env.TARGET_IMAGE_TAG} zaten bu commit'ten build edilmiş, build atlandı."
         return
     }
-    List vars = ["DOCKERFILE=${rc.dockerfile}", "DOCKER_CONTEXT=${rc.dockerContext}", "PUSH=${push}",
+    // DOCKER_CONTEXT değil: Docker CLI o değişkeni kendi context seçimi için okur
+    List vars = ["DOCKERFILE=${rc.dockerfile}", "BUILD_CONTEXT=${rc.dockerContext}", "PUSH=${push}",
                  "IMAGE_TAG=${env.TARGET_IMAGE_TAG ?: ''}", "VERSION=${env.RELEASE_VERSION ?: ''}"]
     String digest = bash(rc, push ? 'Image build + push' : 'Image build (doğrulama)', '''
         if [ "$PUSH" != true ]; then
             iid=$(mktemp); CLEANUP+=("$iid")
-            docker build -f "$DOCKERFILE" --iidfile "$iid" "$DOCKER_CONTEXT" >&2
+            docker build -f "$DOCKERFILE" --iidfile "$iid" "$BUILD_CONTEXT" >&2
             docker rmi "$(cat "$iid")" > /dev/null || true
             exit 0
         fi
@@ -246,7 +247,7 @@ void buildImage(Map rc, boolean push) {
             --label "org.opencontainers.image.version=$VERSION" \\
             --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \\
             --label "org.opencontainers.image.source=${REPO_URL%.git}" \\
-            "$DOCKER_CONTEXT" >&2
+            "$BUILD_CONTEXT" >&2
         docker push "$IMAGE:$IMAGE_TAG" >&2
         image_digest "$IMAGE_TAG"
     ''', vars, true)
