@@ -13,18 +13,18 @@ import groovy.transform.Field
  * release/<sürüm>/<ortam> = success, "bu sürüm o ortama başarıyla çıktı" demektir ve bir sonraki aşamanın şartıdır.
  */
 
-@Field static final String SEMVER = /(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)/
-@Field static final Map TAG_PATTERNS = [
+@Field final String SEMVER = /(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)/
+@Field final Map TAG_PATTERNS = [
     dev : /^v/ + SEMVER + /-dev$/,
     test: /^v/ + SEMVER + /-test$/,
     prod: /^v/ + SEMVER + /$/
 ]
 // Build'i tetikleyen desen (Jenkins'teki isim filtresiyle aynı) ve beklenen tam biçim
-@Field static final String ROLLBACK_TRIGGER = /^rollback-\d+\.\d+\.\d+-.*$/
-@Field static final String ROLLBACK_TAG = /^rollback-/ + SEMVER + /-\d{8}-\d+$/
-@Field static final String PROD_VERSION = /^/ + SEMVER + /$/
+@Field final String ROLLBACK_TRIGGER = /^rollback-\d+\.\d+\.\d+-.*$/
+@Field final String ROLLBACK_TAG = /^rollback-/ + SEMVER + /-\d{8}-\d+$/
+@Field final String PROD_VERSION = /^/ + SEMVER + /$/
 // Sunucuya giden ssh komutlarına girecek değerler
-@Field static final String SAFE = /^[A-Za-z0-9._\/-]+$/
+@Field final String SAFE = /^[A-Za-z0-9._\/-]+$/
 
 /** releasePipeline parametrelerini doğrular, varsayılanları doldurur. */
 Map config(Map cfg) {
