@@ -1,0 +1,25 @@
+// releasePipeline kullanan bir projenin Jenkinsfile'ı. Kurulum: docs/release-setup.md
+@Library('devops-lib@v3') _
+
+releasePipeline(
+    owner        : 'ayse-github',                 // GitHub kullanıcı adı (@mention için)
+    image        : 'ghcr.io/org/app',             // tag'siz, küçük harf
+    dockerfile   : 'src/Api/Dockerfile',
+    dockerContext: 'src',
+    buildCmd     : 'make build',
+    testCmd      : 'make test',
+
+    // knownHosts: ssh-keyscan -t ed25519 <host> çıktısı
+    environments : [
+        dev : [host: 'devtest.internal', dir: '/opt/app/dev',  service: 'api',
+               sshCredentialsId: 'deploy-ssh-devtest', knownHosts: 'devtest.internal ssh-ed25519 AAAA...',
+               healthUrl: 'http://localhost:5001/health'],
+        test: [host: 'devtest.internal', dir: '/opt/app/test', service: 'api',
+               sshCredentialsId: 'deploy-ssh-devtest', knownHosts: 'devtest.internal ssh-ed25519 AAAA...',
+               healthUrl: 'http://localhost:5002/health'],
+        prod: [host: 'prod.internal',    dir: '/opt/app/prod', service: 'api',
+               sshCredentialsId: 'deploy-ssh-prod',    knownHosts: 'prod.internal ssh-ed25519 AAAA...',
+               healthUrl: 'http://localhost:5000/health']
+    ]
+    // githubCredentialsId: 'github-jenkins',  // Username with password: Jenkins machine user + PAT
+)

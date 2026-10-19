@@ -12,10 +12,10 @@
  *   comment       : true ise commit'e yorum da yazılır
  *   owner         : Yorumda @ ile etiketlenecek GitHub kullanıcı adı
  *   message       : Yorum metni (verilmezse otomatik oluşturulur)
- *   credentialsId, apiUrl : githubApi'ye aynen iletilir
+ *   credentialsId, credentialsType, apiUrl : githubApi'ye aynen iletilir
  */
 def call(Map args = [:]) {
-    Map opts = [credentialsId: args.credentialsId, apiUrl: args.apiUrl]
+    Map opts = [credentialsId: args.credentialsId, credentialsType: args.credentialsType, apiUrl: args.apiUrl]
 
     String repo = githubApi.repoSlug()
     String sha  = githubApi.headSha(opts)

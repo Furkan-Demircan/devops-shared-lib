@@ -12,10 +12,13 @@ import groovy.json.JsonSlurperClassic
  *   githubApi.mergedPullFor(sha, "main")      -> sha'yı main'e getiren merge edilmiş PR (veya null)
  *   githubApi.mergerOf(pr)                    -> PR'ı merge eden kullanıcı
  *   githubApi.treeOf(sha)                     -> commit'in tree SHA'sı (içerik karşılaştırması için)
+ *   githubApi.request("PATCH", "repos/...", [..]) -> [status: 200, json: ...]; hata olursa build'i durdurur
  *
  * Ortak opsiyonlar (opts):
- *   credentialsId : Jenkins'teki GitHub token credential ID'si (varsayılan: github-token)
- *   apiUrl        : GitHub Enterprise için API adresi (varsayılan: https://api.github.com)
+ *   credentialsId   : Jenkins'teki GitHub token credential ID'si (varsayılan: github-token)
+ *   credentialsType : 'string' (Secret text, varsayılan) | 'usernamePassword' (kullanıcı adı + PAT)
+ *   apiUrl          : GitHub Enterprise için API adresi (varsayılan: https://api.github.com)
+ *   allowStatus     : Yalnızca request() için; hata sayılmayacak HTTP kodları, ör. [404]
  */
 
 String repoSlug() {
@@ -28,7 +31,7 @@ boolean apiPost(String path, Map body, Map opts = [:]) {
         writeFile file: file, text: JsonOutput.toJson(body)
 
         int rc
-        withCredentials([string(credentialsId: credId(opts), variable: 'GH_TOKEN')]) {
+        withGhToken(opts) {
             rc = sh(returnStatus: true, label: "GitHub API POST ${path}", script: """
                 curl -sS -f -X POST \\
                   -H "Authorization: Bearer \$GH_TOKEN" \\
@@ -56,7 +59,7 @@ boolean apiPost(String path, Map body, Map opts = [:]) {
 def apiGet(String path, Map opts = [:]) {
     try {
         String out
-        withCredentials([string(credentialsId: credId(opts), variable: 'GH_TOKEN')]) {
+        withGhToken(opts) {
             out = sh(returnStdout: true, label: "GitHub API GET ${path}", script: """
                 curl -sS -f \\
                   -H "Authorization: Bearer \$GH_TOKEN" \\
@@ -69,6 +72,41 @@ def apiGet(String path, Map opts = [:]) {
     } catch (err) {
         echo "UYARI: GitHub API çağrısı başarısız (GET ${path}): ${err}"
         return null
+    }
+}
+
+/**
+ * Sonucu önemli olan çağrılar için (release oluşturma/güncelleme): 2xx dışındaki yanıtlar build'i durdurur,
+ * yalnızca opts.allowStatus listesindekiler (ör. [404]) hata sayılmaz.
+ */
+Map request(String method, String path, Map body = null, Map opts = [:]) {
+    String id       = "${env.BUILD_NUMBER}-${System.nanoTime()}"
+    String reqFile  = ".gh-req-${id}.json"
+    String respFile = ".gh-resp-${id}.json"
+    try {
+        if (body != null) {
+            writeFile file: reqFile, text: JsonOutput.toJson(body)
+        }
+        String data = body != null ? "--data @${reqFile}" : ''
+        String code
+        withGhToken(opts) {
+            code = sh(returnStdout: true, label: "GitHub API ${method} ${path}", script: """
+                curl -sS -X ${method} -o ${respFile} -w '%{http_code}' \\
+                  -H "Authorization: Bearer \$GH_TOKEN" \\
+                  -H "Accept: application/vnd.github+json" \\
+                  -H "X-GitHub-Api-Version: 2022-11-28" \\
+                  ${data} \\
+                  '${apiUrl(opts)}/${path}'
+            """).trim()
+        }
+        String text = fileExists(respFile) ? readFile(respFile) : ''
+        int status = code as int
+        if ((status < 200 || status >= 300) && !(status in (opts.allowStatus ?: []))) {
+            error "GitHub API ${method} ${path} başarısız (HTTP ${status}): ${text.take(500)}"
+        }
+        return [status: status, json: text ? parseJson(text) : null]
+    } finally {
+        sh(returnStatus: true, script: "rm -f ${reqFile} ${respFile}")
     }
 }
 
@@ -135,6 +173,19 @@ private def apiGetOrFail(String path, Map opts) {
 }
 
 private String credId(Map opts) { return opts.credentialsId ?: 'github-token' }
+
+/** Token'ı GH_TOKEN olarak bağlar; usernamePassword credential'ında kullanıcı adı da GH_USER olur. */
+private def withGhToken(Map opts, Closure body) {
+    if (opts.credentialsType == 'usernamePassword') {
+        withCredentials([usernamePassword(credentialsId: credId(opts), usernameVariable: 'GH_USER', passwordVariable: 'GH_TOKEN')]) {
+            body()
+        }
+    } else {
+        withCredentials([string(credentialsId: credId(opts), variable: 'GH_TOKEN')]) {
+            body()
+        }
+    }
+}
 private String apiUrl(Map opts) { return opts.apiUrl ?: 'https://api.github.com' }
 
 @NonCPS

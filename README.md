@@ -1,16 +1,84 @@
 # devops-shared-lib
 
-Jenkins Shared Library: projelerin ortak CI/CD pipeline'ı. Bildirimler ve prod onayı GitHub üzerinden.
+Jenkins Shared Library: projelerin ortak CI/CD pipeline'ları. Bildirimler ve onaylar GitHub üzerinden.
 
 ```
 devops-shared-lib/
 ├── vars/
+│   ├── releasePipeline.groovy   # (v3) Tag tabanlı deploy: dev, test, prod ortam branch'leri
+│   ├── releaseSteps.groovy      # releasePipeline'ın kontrolleri, build, deploy ve Release adımları
 │   ├── githubApi.groovy         # GitHub REST API yardımcıları
 │   ├── notifyGitHub.groovy      # Commit status + @mention'lı commit yorumu
-│   └── standardPipeline.groovy  # stage: Build → Test → Stage | main: Build → Test → Kontrol → Prod
+│   └── standardPipeline.groovy  # (v2) stage: Build → Test → Stage | main: Build → Test → Kontrol → Prod
+├── resources/devops/release/
+│   ├── common.sh                # git / registry / ssh shell yardımcıları
+│   └── remote.sh                # Deploy sunucusunda çalışan kısım (docker compose)
+├── docs/
+│   ├── release-setup.md         # GitHub, Jenkins, sunucu kurulumu, API çağrıları, riskler
+│   └── developer-guide.md       # Developer'lar için sürüm çıkarma kılavuzu
 └── example/
-    └── Jenkinsfile              # Bir projede kullanım örneği
+    ├── Jenkinsfile              # standardPipeline örneği
+    └── Jenkinsfile.release      # releasePipeline örneği
 ```
+
+## releasePipeline (v3)
+
+Deploy'ları yalnızca tag'ler tetikler; branch push'ları ve merge'ler deploy etmez. Ortam branch'leri (`dev`, `test`,
+`main`) bağımsızdır: feature'lar her birine ayrı PR ile merge edilir. Merge'den sonra **o branch'in ucu** tag'lenir.
+Tag'leri developer/yetkili kişi atar, Jenkins tag oluşturmaz. Her tag kendi commit'inden image build eder.
+
+| Tag (kim atar, nereye) | Jenkins ne yapar |
+|---|---|
+| `v1.0.5-dev` (developer, `dev`'in ucu) | Build → Test → image `1.0.5-dev` push → dev'e deploy |
+| `v1.0.5-test` (`testers`, `test`'in ucu) | Build → Test → image `1.0.5-test` push → test'e deploy |
+| `v1.0.5` (`release-managers`, `main`'in ucu) | Build → Test → image `1.0.5` push → prod'a deploy → GitHub Release |
+| `rollback-1.0.4-20261019-1` (`release-managers`) | Image `1.0.4`'ü prod'a yeniden deploy (build yok) → geri alınan sürümün Release'i pre-release + not |
+| PR'lar | Build → Test → image build doğrulaması (push/deploy yok) |
+| Diğer tag'ler | Hiçbir şey (NOT_BUILT) |
+
+Her başarılı deploy, tag'lenen commit'e `release/<sürüm>/<ortam> = success` status'u yazar. Sıradaki ortam bu
+status'u, önceki ortamın tag'inin commit'inde şart koşar.
+
+Durduran kontroller:
+- Tag annotated olmalı. Commit, ortam branch'inin kendi (first-parent) geçmişinde olmalı:
+  `git rev-list --first-parent origin/<dev|test|main>`. Feature commit'ine atılan tag reddedilir.
+- `v1.0.5-test` için `v1.0.5-dev`, `v1.0.5` için `v1.0.5-test` var olmalı ve o ortama başarıyla çıkmış olmalı.
+- Ortamın image'ı zaten varsa durur. Tek istisna Rebuild: image'ın revision label'ı bu commit'i gösteriyorsa build
+  atlanıp deploy'dan devam edilir. Sürüm o ortama zaten çıktıysa (status success veya prod Release'i varsa) her
+  durumda durur. Hiçbir şeyin üzerine yazılmaz.
+- Rollback'te hedef sürümün GitHub Release'i (yani başarılı bir prod deploy'u) ve image'ı olmalı. Rollback tag'i
+  `v<sürüm>`'ün commit'inde olmalı ve prod'da zaten o sürüm çalışmıyor olmalı.
+
+Prod'da `main`'in içeriği `v1.0.5-test`'in commit'inden farklıysa build durmaz, ama fark listesi loga ve Release
+notuna yazılır. Prod'da çalışan sürüm, prod sunucusundaki container'dan okunur (`docker inspect`). Deploy SSH +
+docker compose ile yapılır.
+
+```groovy
+@Library('devops-lib@v3') _
+
+releasePipeline(
+    owner        : 'ayse-github',
+    image        : 'ghcr.io/org/app',
+    dockerfile   : 'src/Api/Dockerfile',
+    buildCmd     : 'make build',
+    testCmd      : 'make test',
+    environments : [
+        dev : [host: 'devtest.internal', dir: '/opt/app/dev',  service: 'api', sshCredentialsId: 'deploy-ssh-devtest', knownHosts: '...'],
+        test: [host: 'devtest.internal', dir: '/opt/app/test', service: 'api', sshCredentialsId: 'deploy-ssh-devtest', knownHosts: '...'],
+        prod: [host: 'prod.internal',    dir: '/opt/app/prod', service: 'api', sshCredentialsId: 'deploy-ssh-prod',    knownHosts: '...']
+    ]
+)
+```
+
+Tüm parametreler [vars/releasePipeline.groovy](vars/releasePipeline.groovy) başındadır. Kurulum ve riskler:
+[docs/release-setup.md](docs/release-setup.md). Developer'lar için: [docs/developer-guide.md](docs/developer-guide.md).
+
+v3'e geçerken `standardPipeline` değişmedi; onu kullanan projeler aynen çalışır. Tek fark: `githubApi` ve
+`notifyGitHub` artık `credentialsType: 'usernamePassword'` opsiyonunu da kabul eder.
+
+---
+
+# standardPipeline (v2)
 
 ## Akış
 
